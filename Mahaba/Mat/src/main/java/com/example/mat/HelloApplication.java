@@ -9,6 +9,7 @@ import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
 import javafx.scene.layout.*;
+import javafx.scene.media.*;
 import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.FileChooser;
@@ -25,6 +26,13 @@ public class HelloApplication extends Application {
     private Color currentColor = Color.BLACK;
     private double strokeWidth = 2;
     private double lastX = -1, lastY = -1; // To store the last mouse position for continuous drawing
+    private boolean isEraseMode = false; // Flag for erase mode
+
+    private MediaPlayer mediaPlayer;
+    private Image movableImage;
+    private double imageX, imageY;
+    private boolean isImageDragged = false;
+    private double lastImageX, lastImageY;
 
     public static void main(String[] args) {
         launch(args);
@@ -43,7 +51,11 @@ public class HelloApplication extends Application {
         // Create a Color Picker
         ColorPicker colorPicker = new ColorPicker(currentColor);
         colorPicker.setStyle("-fx-font-size: 16px; -fx-background-color: #f8f9fa; -fx-border-color: #dfe6e9; -fx-border-width: 2px;");
-        colorPicker.setOnAction(event -> currentColor = colorPicker.getValue());
+        colorPicker.setOnAction(event -> {
+            if (!isEraseMode) {
+                currentColor = colorPicker.getValue(); // Update color if not in erase mode
+            }
+        });
 
         // Create a Slider for Stroke Width
         Slider strokeSlider = new Slider(1, 10, strokeWidth);
@@ -65,11 +77,32 @@ public class HelloApplication extends Application {
         Button imageButton = createStyledButton("Add Image");
         imageButton.setOnAction(e -> addImageToCanvas(primaryStage));
 
+        Button videoButton = createStyledButton("Add Video");
+        videoButton.setOnAction(e -> addVideoToCanvas(primaryStage));
+
+        Button musicButton = createStyledButton("Add Music");
+        musicButton.setOnAction(e -> addMusicToCanvas(primaryStage));
+
         Button saveButton = createStyledButton("Save");
         saveButton.setOnAction(e -> saveCanvas(primaryStage));
 
+        // Create Erase Button
+        Button eraseButton = createStyledButton("Erase");
+        eraseButton.setOnAction(e -> toggleEraseMode());
+
+        // Create a Back to Canvas Button
+        Button backToCanvasButton = createStyledButton("Back to Canvas");
+        backToCanvasButton.setOnAction(e -> {
+            // Clear canvas and stop any media before switching
+            clearCanvas(); // Clears the canvas
+            stopMedia();   // Stops any playing audio or video
+
+            // Revert back to the canvas scene with buttons and original layout
+            primaryStage.setScene(createCanvasScene(primaryStage)); // Switches back to canvas scene
+        });
+
         // HBox Layout for Buttons with new styling
-        HBox tools = new HBox(20, colorPicker, strokeSlider, clearButton, textButton, imageButton, saveButton);
+        HBox tools = new HBox(20, colorPicker, strokeSlider, clearButton, textButton, imageButton, videoButton, musicButton, saveButton, eraseButton, backToCanvasButton);
         tools.setStyle("-fx-padding: 20px; -fx-background-color: #2d3436; -fx-spacing: 15px; -fx-border-radius: 10px; -fx-border-color: #b2bec3; -fx-border-width: 3px;");
         tools.setAlignment(Pos.CENTER);
         tools.setMaxWidth(Double.MAX_VALUE);
@@ -79,26 +112,6 @@ public class HelloApplication extends Application {
         VBox root = new VBox(15, canvas, tools);
         root.setStyle("-fx-background-color: #f1f2f6; -fx-padding: 15px;");
         root.setAlignment(Pos.CENTER);
-
-        // Mouse Drawing Event
-        canvas.setOnMousePressed(e -> {
-            gc.setStroke(currentColor);
-            gc.setLineWidth(strokeWidth);
-            lastX = e.getX();
-            lastY = e.getY();
-        });
-        canvas.setOnMouseDragged(e -> {
-            double currentX = e.getX();
-            double currentY = e.getY();
-
-            // Drawing continuous line
-            if (lastX != -1 && lastY != -1) {
-                gc.strokeLine(lastX, lastY, currentX, currentY); // Draw line from last position to current position
-            }
-
-            lastX = currentX; // Update last position
-            lastY = currentY;
-        });
 
         // Scene setup with adjusted dimensions
         Scene scene = new Scene(root, 1024, 768);
@@ -114,6 +127,11 @@ public class HelloApplication extends Application {
         button.setOnMouseExited(e -> button.setStyle("-fx-background-color: #0984e3; -fx-font-size: 16px; -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.1), 10, 0, 0, 3);"));
         button.setOnMousePressed(e -> button.setStyle("-fx-background-color: #0984e3; -fx-font-size: 16px;"));
         return button;
+    }
+
+    // Toggle Erase Mode
+    private void toggleEraseMode() {
+        isEraseMode = !isEraseMode;
     }
 
     // Clear the canvas
@@ -137,46 +155,118 @@ public class HelloApplication extends Application {
         });
     }
 
-    // Add Image to Canvas (Centered & Scaled)
+    // Add Image to Canvas (Movable)
     private void addImageToCanvas(Stage primaryStage) {
         FileChooser fileChooser = new FileChooser();
         fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg", "*.jpeg"));
         File file = fileChooser.showOpenDialog(primaryStage);
         if (file != null) {
-            Image image = new Image(file.toURI().toString());
+            movableImage = new Image(file.toURI().toString());
+            imageX = (canvas.getWidth() - movableImage.getWidth()) / 2;
+            imageY = (canvas.getHeight() - movableImage.getHeight()) / 2;
+            drawCanvas();
+        }
+    }
 
-            // Calculate scaling to fit inside canvas while maintaining aspect ratio
-            double maxWidth = canvas.getWidth() * 0.7;
-            double maxHeight = canvas.getHeight() * 0.7;
-            double aspectRatio = image.getWidth() / image.getHeight();
+    // Draw the Canvas with all elements (image, etc.)
+    private void drawCanvas() {
+        gc.clearRect(0, 0, canvas.getWidth(), canvas.getHeight());
+        gc.setFill(Color.WHITE);
+        gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
+        if (movableImage != null) {
+            gc.drawImage(movableImage, imageX, imageY);
+        }
+    }
 
-            double width = maxWidth;
-            double height = maxWidth / aspectRatio;
+    // Add Video to Canvas (Play/Pause)
+    private void addVideoToCanvas(Stage primaryStage) {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Video Files", "*.mp4", "*.mkv", "*.avi"));
+        File file = fileChooser.showOpenDialog(primaryStage);
+        if (file != null) {
+            Media media = new Media(file.toURI().toString());
+            mediaPlayer = new MediaPlayer(media);
+            mediaPlayer.setAutoPlay(true);
 
-            if (height > maxHeight) {
-                height = maxHeight;
-                width = maxHeight * aspectRatio;
-            }
+            MediaView mediaView = new MediaView(mediaPlayer);
+            mediaView.setFitWidth(canvas.getWidth());
+            mediaView.setFitHeight(canvas.getHeight());
 
-            // Center the image
-            double x = (canvas.getWidth() - width) / 2;
-            double y = (canvas.getHeight() - height) / 2;
+            // Layout for video
+            VBox videoRoot = new VBox(15, mediaView);
+            videoRoot.setStyle("-fx-background-color: #f1f2f6; -fx-padding: 15px;");
+            videoRoot.setAlignment(Pos.CENTER);
 
-            gc.drawImage(image, x, y, width, height);
+            Scene videoScene = new Scene(videoRoot, 1024, 768);
+            primaryStage.setScene(videoScene);
+            primaryStage.show();
+        }
+    }
+
+    // Add Music to Canvas
+    private void addMusicToCanvas(Stage primaryStage) {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Audio Files", "*.mp3", "*.wav"));
+        File file = fileChooser.showOpenDialog(primaryStage);
+        if (file != null) {
+            Media media = new Media(file.toURI().toString());
+            mediaPlayer = new MediaPlayer(media);
+            mediaPlayer.play();
         }
     }
 
     // Save Canvas to File
     private void saveCanvas(Stage primaryStage) {
         FileChooser fileChooser = new FileChooser();
-        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("PNG Files", "*.png"));
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("Image Files", "*.png", "*.jpg"));
         File file = fileChooser.showSaveDialog(primaryStage);
+
         if (file != null) {
-            try {
-                ImageIO.write(SwingFXUtils.fromFXImage(canvas.snapshot(null, null), null), "png", file);
-            } catch (IOException e) {
-                e.printStackTrace();
+            String extension = getFileExtension(file);
+            switch (extension) {
+                case "png":
+                case "jpg":
+                    saveCanvasAsImage(file, extension);
+                    break;
+                default:
+                    System.out.println("Invalid file type.");
             }
+        }
+    }
+
+    private void saveCanvasAsImage(File file, String extension) {
+        try {
+            Image image = canvas.snapshot(null, null);
+            if ("png".equalsIgnoreCase(extension)) {
+                ImageIO.write(SwingFXUtils.fromFXImage(image, null), "PNG", file);
+            } else if ("jpg".equalsIgnoreCase(extension)) {
+                ImageIO.write(SwingFXUtils.fromFXImage(image, null), "JPG", file);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private String getFileExtension(File file) {
+        String name = file.getName();
+        int i = name.lastIndexOf('.');
+        return (i > 0) ? name.substring(i + 1).toLowerCase() : "";
+    }
+
+    // Create a canvas scene for easy switching
+    private Scene createCanvasScene(Stage primaryStage) {
+        VBox root = new VBox(15, canvas);
+        root.setStyle("-fx-background-color: #f1f2f6; -fx-padding: 15px;");
+        root.setAlignment(Pos.CENTER);
+        return new Scene(root, 1024, 768);
+    }
+
+    // Method to stop any media (video/music)
+    private void stopMedia() {
+        if (mediaPlayer != null) {
+            mediaPlayer.stop();
+            mediaPlayer = null;
         }
     }
 }
